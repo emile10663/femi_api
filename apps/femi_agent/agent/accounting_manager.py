@@ -194,6 +194,29 @@ def _impute_to_open_operation(
     return derniere_operation_maj
 
 
+def _resolve_paiement(txn):
+    """Retourne (statut_paiement, montant_paye) pour une nouvelle opération.
+
+    Une avance (montant_deja_paye) est prise en compte pour une opération
+    à crédit ; si l'avance couvre déjà le total, l'opération est PAYE.
+    """
+
+    total = txn.amount_ttc or 0
+
+    if txn.statut_paiement != "CREDIT":
+        return "PAYE", total
+
+    avance = txn.montant_deja_paye or 0
+
+    if avance <= 0:
+        return "CREDIT", 0
+
+    if total > 0 and avance >= total:
+        return "PAYE", total
+
+    return "CREDIT", avance
+
+
 def _save_single_transaction(
     entreprise,
     utilisateur,
@@ -241,6 +264,8 @@ def _save_single_transaction(
     # CRÉATION DE L'OPÉRATION
     # ---------------------------------------------------------
 
+    statut_paiement, montant_paye = _resolve_paiement(txn)
+
     operation = Operation.objects.create(
         entreprise=entreprise,
         transaction_type=txn.transaction_type,
@@ -270,12 +295,8 @@ def _save_single_transaction(
         source=source,
 
         # Paiement
-        statut_paiement=txn.statut_paiement,
-        montant_paye=(
-            0
-            if txn.statut_paiement == "CREDIT"
-            else txn.amount_ttc
-        ),
+        statut_paiement=statut_paiement,
+        montant_paye=montant_paye,
     )
 
     # ---------------------------------------------------------

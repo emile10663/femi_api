@@ -104,6 +104,32 @@ document, détermine le statut de paiement ainsi :
 """
 
 
+_PAIEMENT_PARTIEL_RULE = """==================================================
+AVANCE, ACOMPTE ET RESTE À PAYER (PRIORITAIRE)
+==================================================
+
+Lis TOUT le texte du document ou du message, y compris le bas de page :
+"acompte", "avance", "versé", "déjà payé", "reste à payer", "solde",
+"net à payer".
+
+Si une partie seulement a été payée :
+
+→ amount_ttc = le MONTANT TOTAL de la facture (jamais le reste à payer) ;
+→ montant_deja_paye = la somme déjà versée (avance / acompte) ;
+→ statut_paiement = CREDIT.
+
+Exemple : total 2 100 000, avance 1 700 000, reste 400 000
+→ amount_ttc = 2100000, montant_deja_paye = 1700000, statut_paiement = CREDIT.
+
+Si tout est payé : statut_paiement = PAYE, montant_deja_paye = null.
+Si rien n'est payé : statut_paiement = CREDIT, montant_deja_paye = null.
+Si le document donne l'avance et le reste, ne pose AUCUNE question sur le
+paiement : tout est déjà connu.
+Ne calcule jamais toi-même une avance qui n'est pas écrite.
+
+"""
+
+
 def _build_entreprise_context(nom_entreprise: str | None) -> str:
     nom = (nom_entreprise or "").strip() or "(nom non renseigné)"
     return _ENTREPRISE_CONTEXT_TEMPLATE.replace("__NOM_ENTREPRISE__", nom)
@@ -137,7 +163,12 @@ class AccountingExecutor:
         """
         base = ACCOUNTING_PROMPT.replace("{categories_disponibles}", categories_disponibles)
         document_rule = _DOCUMENT_PAIEMENT_RULE if from_document else ""
-        return _build_entreprise_context(nom_entreprise) + document_rule + base
+        return (
+            _build_entreprise_context(nom_entreprise)
+            + _PAIEMENT_PARTIEL_RULE
+            + document_rule
+            + base
+        )
 
     @classmethod
     def execute(

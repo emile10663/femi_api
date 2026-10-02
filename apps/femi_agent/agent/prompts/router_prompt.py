@@ -172,7 +172,7 @@ Exemple :
 → CUSTOMER / READ
 
 "Combien mes clients me doivent au total ?"
-→ FINANCIAL_ANALYST / READ
+→ CUSTOMER / READ (créances de l'ensemble des clients : outil get_all_open_debts)
 
 
 ### SETTINGS
@@ -646,7 +646,7 @@ Exemples :
 → CUSTOMER / READ
 
 "Combien mes clients me doivent au total ?"
-→ FINANCIAL_ANALYST / READ
+→ CUSTOMER / READ (créances de l'ensemble des clients : outil get_all_open_debts)
 
 "Combien ai-je vendu ce mois-ci ?"
 → FINANCIAL_ANALYST / READ

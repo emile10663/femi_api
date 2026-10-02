@@ -1203,7 +1203,27 @@ class FemiRouterManager:
             extra = f" ({txn.category})" if txn.category else ""
             contact = f" — {txn.contact}" if txn.contact else ""
             statut = getattr(txn, "statut_paiement", "PAYE")
-            if statut == "CREDIT" and txn.transaction_type == "RECETTE":
+            avance = getattr(txn, "montant_deja_paye", None)
+            if (
+                statut == "CREDIT"
+                and avance
+                and txn.amount_ttc
+                and 0 < avance < txn.amount_ttc
+                and txn.transaction_type in ("RECETTE", "DEPENSE")
+            ):
+                reste = cls._format_montant(txn.amount_ttc - avance, txn.currency)
+                deja = cls._format_montant(avance, txn.currency)
+                if txn.transaction_type == "RECETTE":
+                    lines.append(
+                        f"✅ Vente de {montant}{extra}{contact} enregistrée.\n"
+                        f"Avance reçue : {deja}. Il reste {reste} à encaisser."
+                    )
+                else:
+                    lines.append(
+                        f"✅ Achat de {montant}{extra}{contact} enregistré.\n"
+                        f"Avance versée : {deja}. Il reste {reste} à payer."
+                    )
+            elif statut == "CREDIT" and txn.transaction_type == "RECETTE":
                 lines.append(
                     f"✅ Vente à crédit de {montant}{extra}{contact} enregistrée.\n"
                     f"Créance client : {montant} restent à encaisser."
@@ -1251,11 +1271,11 @@ class FemiRouterManager:
     # d'abord. Texte fixe (pas de LLM) : réponse identique et fiable pour
     # une application comptable.
     _MISSING_FIELD_QUESTIONS = {
-        "transaction_type": "C'est une vente, un achat, un prêt accordé ou un prêt reçu ?",
-        "amount_ttc": "Quel est le montant de l'opération ?",
-        "nature_creance": "S'agit-il du remboursement d'une dette de vente, ou d'un prêt que tu avais accordé ?",
-        "statut_paiement": "Est-ce déjà payé, ou à crédit ?",
-        "contact_disambiguation": "J'ai plusieurs contacts qui correspondent à ce nom. Peux-tu préciser lequel (nom complet) ?",
+        "transaction_type": "Dis-moi, c'est une vente que tu as faite, ou un achat pour ton activité ? (Si c'est un prêt, précise-le-moi.)",
+        "amount_ttc": "Quel est le montant total, s'il te plaît ?",
+        "nature_creance": "C'est le remboursement d'une vente à crédit, ou d'un prêt que tu avais accordé ?",
+        "statut_paiement": "Est-ce que c'est déjà réglé en totalité, ou est-ce qu'il reste une partie à payer ? S'il y a eu une avance, dis-moi combien.",
+        "contact_disambiguation": "J'ai plusieurs personnes avec ce nom. C'est laquelle ? Donne-moi son nom complet.",
         "target_data": "Quelle opération veux-tu modifier ou supprimer ? Donne-moi le montant, la date ou le nom du contact.",
         "search_criteria": "Quelle opération cherches-tu ? Donne-moi le montant, la date ou le nom du contact.",
         "operation_not_found": "Je ne retrouve pas cette opération. Peux-tu donner le montant, la date ou le nom du contact ?",
@@ -1279,7 +1299,35 @@ class FemiRouterManager:
     _CLARIFICATION_SKIP_CODES = {"fonctionnalite_non_disponible", "operation_disambiguation"}
 
     @classmethod
-    def _build_clarification_message(cls, missing_fields: list[str]) -> str | None:
+    def _build_understood_recap(cls, accounting_results) -> str | None:
+        """Phrase courte de ce que Femi a déjà compris (montant, contact),
+        pour ne pas redemander ce qu'il sait et rassurer l'utilisateur."""
+
+        for result in accounting_results or []:
+            if not getattr(result, "needs_clarification", False):
+                continue
+            for txn in getattr(result, "transactions", []) or []:
+                if not txn.amount_ttc:
+                    continue
+                montant = cls._format_montant(txn.amount_ttc, txn.currency)
+                contact = f" ({txn.contact})" if txn.contact else ""
+                avance = getattr(txn, "montant_deja_paye", None)
+                if avance:
+                    return (
+                        f"J'ai bien lu ta facture de {montant}{contact} "
+                        f"et je vois une avance de "
+                        f"{cls._format_montant(avance, txn.currency)}."
+                    )
+                return f"J'ai bien lu ton document : {montant}{contact}."
+
+        return None
+
+    @classmethod
+    def _build_clarification_message(
+        cls,
+        missing_fields: list[str],
+        accounting_results=None,
+    ) -> str | None:
         """Question(s) en français à partir des codes missing_fields.
 
         Retourne None s'il n'y a rien à demander. Un code inconnu ne produit
@@ -1299,13 +1347,16 @@ class FemiRouterManager:
         if not questions and not has_unknown:
             return None
         if not questions:
-            return "Il me manque une précision pour continuer. Peux-tu compléter ta demande ?"
+            return "Il me manque une petite précision pour continuer. Peux-tu m'en dire un peu plus ?"
 
         questions = questions[:3]
+        recap = cls._build_understood_recap(accounting_results)
         if len(questions) == 1:
-            return f"Il me manque une précision : {questions[0]}"
+            intro = f"{recap} Une petite précision et j'enregistre :" if recap else "Une petite précision pour bien l'enregistrer :"
+            return f"{intro}\n{questions[0]}"
         liste = "\n".join(f"{i}. {q}" for i, q in enumerate(questions, start=1))
-        return f"Il me manque quelques précisions :\n{liste}"
+        intro = f"{recap} Deux ou trois précisions et j'enregistre :" if recap else "Pour bien l'enregistrer, j'ai juste besoin de quelques précisions :"
+        return f"{intro}\n{liste}"
 
     @classmethod
     def _build_final_message(
@@ -1349,7 +1400,9 @@ class FemiRouterManager:
             # Une opération du lot peut être enregistrée pendant qu'une autre
             # attend une précision : ne pas perdre la question.
             if needs_clarification:
-                clarification = cls._build_clarification_message(missing_fields)
+                clarification = cls._build_clarification_message(
+                    missing_fields, accounting_results
+                )
                 if clarification:
                     lines.append(clarification)
             return "\n\n".join(lines)
@@ -1368,7 +1421,9 @@ class FemiRouterManager:
                     "• Tes créances clients et qui relancer ;\n"
                     "• Enregistrer, modifier ou supprimer une transaction."
                 )
-            clarification = cls._build_clarification_message(missing_fields)
+            clarification = cls._build_clarification_message(
+                    missing_fields, accounting_results
+                )
             if clarification:
                 return clarification
             return "Je n'ai pas toutes les informations nécessaires. Peux-tu préciser ta demande ?"

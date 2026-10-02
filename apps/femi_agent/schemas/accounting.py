@@ -102,6 +102,8 @@ class AccountingTransactionLLMSchema(BaseModel):
     amount_ttc: Optional[float] = Field(default=None, ge=0)
     amount_ht: Optional[float] = Field(default=None, ge=0)
     tax_amount: Optional[float] = Field(default=None, ge=0)
+    # Avance / acompte déjà versé (facture partiellement payée). Null si aucun.
+    montant_deja_paye: Optional[float] = Field(default=None, ge=0)
 
     currency: Optional[str] = Field(default=None, max_length=5)
     category: Optional[str] = None
@@ -183,6 +185,7 @@ class AccountingTransactionSchema(BaseModel):
     amount_ttc: Optional[Decimal] = Field(default=None, ge=0)
     amount_ht: Optional[Decimal] = Field(default=None, ge=0)
     tax_amount: Optional[Decimal] = Field(default=None, ge=0)
+    montant_deja_paye: Optional[Decimal] = Field(default=None, ge=0)
 
     currency: Optional[str] = Field(default=None, max_length=5)
     category: Optional[str] = None
@@ -202,6 +205,7 @@ class AccountingTransactionSchema(BaseModel):
         "amount_ttc",
         "amount_ht",
         "tax_amount",
+        "montant_deja_paye",
         mode="before",
     )
     @classmethod
